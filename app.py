@@ -3,12 +3,100 @@ import pandas as pd
 import re
 from collections import Counter
 from io import BytesIO
-import base64
+import time  # Adicionado para gerar keys únicas
 
 # Configuração da página com CSS customizado
 def inject_custom_css():
-    with open("assets/style.css") as f:
-        st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+    st.markdown("""
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            color: #333;
+            line-height: 1.6;
+        }
+        .header {
+            background-color: #4a6fa5;
+            color: white;
+            padding: 1.5rem;
+            border-radius: 10px;
+            margin-bottom: 2rem;
+        }
+        .header h1 {
+            margin: 0;
+            font-size: 2rem;
+        }
+        .subtitle {
+            margin: 0.5rem 0 0;
+            opacity: 0.9;
+            font-size: 1rem;
+        }
+        .section {
+            background-color: #f8f9fa;
+            padding: 1.5rem;
+            border-radius: 10px;
+            margin-bottom: 1.5rem;
+        }
+        .section h2 {
+            margin-top: 0;
+            color: #4a6fa5;
+        }
+        .instructions {
+            color: #666;
+            font-size: 0.9rem;
+            margin-bottom: 1rem;
+        }
+        .sidebar-header {
+            font-weight: bold;
+            font-size: 1.1rem;
+            margin-bottom: 1rem;
+            color: #4a6fa5;
+        }
+        .sidebar-section {
+            font-weight: bold;
+            margin: 1.5rem 0 0.5rem;
+            color: #555;
+        }
+        .stopwords-list {
+            font-size: 0.85rem;
+            color: #666;
+            margin: 0.5rem 0;
+            line-height: 1.5;
+        }
+        .results-header {
+            font-weight: bold;
+            font-size: 1.1rem;
+            margin: 1.5rem 0 1rem;
+            color: #4a6fa5;
+        }
+        .table-container {
+            background-color: white;
+            border-radius: 8px;
+            padding: 1rem;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .chart-container {
+            background-color: white;
+            border-radius: 8px;
+            padding: 1rem;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .stDownloadButton, .stButton>button {
+            background-color: #4a6fa5 !important;
+            color: white !important;
+            border: none !important;
+            padding: 0.5rem 1rem !important;
+            border-radius: 5px !important;
+            font-weight: 500 !important;
+            transition: background-color 0.3s !important;
+        }
+        .stDownloadButton:hover, .stButton>button:hover {
+            background-color: #3a5a8f !important;
+        }
+        .stAlert {
+            border-radius: 8px !important;
+        }
+    </style>
+    """, unsafe_allow_html=True)
 
 # Palavras para ignorar (inicial)
 DEFAULT_STOPWORDS = {
@@ -60,7 +148,10 @@ def main():
         
         # Adicionar palavras para ignorar
         st.markdown('<div class="sidebar-section">Palavras para Ignorar</div>', unsafe_allow_html=True)
-        new_stopword = st.text_input("Adicionar nova palavra:", key="new_stopword")
+        new_stopword = st.text_input(
+            "Adicionar nova palavra:", 
+            key=f"new_stopword_{time.time()}"  # Chave única baseada no timestamp
+        )
         
         if st.button("Adicionar", key="add_stopword"):
             if 'custom_stopwords' not in st.session_state:
@@ -157,9 +248,6 @@ def main():
         
         except Exception as e:
             st.error(f"❌ Erro ao processar o arquivo: {str(e)}")
-
-if __name__ == "__main__":
-    main()
 
 if __name__ == "__main__":
     main()
