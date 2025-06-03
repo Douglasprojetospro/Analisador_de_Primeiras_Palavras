@@ -3,7 +3,7 @@ import pandas as pd
 import re
 from collections import Counter
 from io import BytesIO
-import time  # Adicionado para gerar keys únicas
+import time
 
 # Configuração da página com CSS customizado
 def inject_custom_css():
@@ -95,12 +95,20 @@ def inject_custom_css():
         .stAlert {
             border-radius: 8px !important;
         }
+        .word-tag {
+            display: inline-block;
+            background: #f0f0f0;
+            border-radius: 15px;
+            padding: 5px 10px;
+            margin: 3px;
+            font-size: 0.85rem;
+        }
     </style>
     """, unsafe_allow_html=True)
 
 # Palavras para ignorar (inicial)
 DEFAULT_STOPWORDS = {
-    'de', 'para', 'com', 'sem', 'em', 'por', 'que', 'os', 'as', 'um', 'uma',
+    'de', 'para', 'com', 'sem', 'em', 'por', 'que', 'os', 'as', 'um', 'una',
     'ao', 'aos', 'do', 'da', 'dos', 'das', 'no', 'na', 'nos', 'nas', 'pelo',
     'pela', 'pelos', 'pelas', 'este', 'esta', 'estes', 'estas', 'esse',
     'essa', 'esses', 'essas', 'aquele', 'aquela', 'aqueles', 'aquelas',
@@ -150,7 +158,7 @@ def main():
         st.markdown('<div class="sidebar-section">Palavras para Ignorar</div>', unsafe_allow_html=True)
         new_stopword = st.text_input(
             "Adicionar nova palavra:", 
-            key=f"new_stopword_{time.time()}"  # Chave única baseada no timestamp
+            key=f"new_stopword_{time.time()}"
         )
         
         if st.button("Adicionar", key="add_stopword"):
@@ -216,14 +224,36 @@ def main():
             if 'custom_stopwords' in st.session_state:
                 current_stopwords.update(st.session_state.custom_stopwords)
             
+            # Seção para exibir palavras ignoradas
+            st.markdown("""
+            <div class="section">
+                <h2>🚫 Palavras sendo ignoradas</h2>
+                <p class="instructions">Lista completa de palavras que estão sendo filtradas na análise</p>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            tags_html = "<div style='margin-bottom:20px;'>"
+            for word in sorted(current_stopwords):
+                tags_html += f"<span class='word-tag'>{word}</span>"
+            tags_html += "</div>"
+            st.markdown(tags_html, unsafe_allow_html=True)
+            
             with st.spinner("🔍 Analisando primeiras palavras..."):
                 first_words = analyze_first_words(df, current_stopwords)
+                df_result = pd.DataFrame(first_words, columns=["Primeira Palavra", "Frequência"])
+                
+                # Criar relatório completo
+                df_report = df.copy()
+                df_report['Primeira Palavra'] = df_report['Descrição'].apply(extract_first_word)
+                freq_map = dict(first_words)
+                df_report['Frequência da Primeira Palavra'] = df_report['Primeira Palavra'].map(freq_map)
+                df_report['Palavra Ignorada?'] = df_report['Primeira Palavra'].apply(
+                    lambda x: 'Sim' if x and str(x).lower() in current_stopwords else 'Não'
+                )
             
             if not first_words:
                 st.warning("⚠️ Nenhuma palavra válida encontrada")
                 st.stop()
-            
-            df_result = pd.DataFrame(first_words, columns=["Primeira Palavra", "Frequência"])
             
             st.markdown('<div class="results-header">📈 Resultados da Análise</div>', unsafe_allow_html=True)
             
@@ -239,12 +269,39 @@ def main():
                 st.bar_chart(df_result.set_index("Primeira Palavra").head(20), height=500)
                 st.markdown('</div>', unsafe_allow_html=True)
             
-            st.download_button(
-                "📥 Exportar Resultados",
-                data=to_excel(df_result),
-                file_name="resultado_analise.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
+            # Seção de exportação
+            st.markdown("""
+            <div class="section">
+                <h2>💾 Exportar Resultados</h2>
+                <p class="instructions">Escolha o formato desejado para download</p>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            col_export1, col_export2, col_export3 = st.columns(3)
+            
+            with col_export1:
+                st.download_button(
+                    "📊 Resultados da Análise",
+                    data=to_excel(df_result),
+                    file_name="resultado_analise.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+            
+            with col_export2:
+                st.download_button(
+                    "📝 Relatório Simplificado",
+                    data=to_excel(df_report[['ID', 'Descrição', 'Primeira Palavra', 'Frequência da Primeira Palavra']]),
+                    file_name="relatorio_simplificado.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+            
+            with col_export3:
+                st.download_button(
+                    "📚 Relatório Completo",
+                    data=to_excel(df_report),
+                    file_name="relatorio_completo.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
         
         except Exception as e:
             st.error(f"❌ Erro ao processar o arquivo: {str(e)}")
