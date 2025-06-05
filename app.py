@@ -1,114 +1,32 @@
+import os
 import streamlit as st
 import pandas as pd
 import re
-from collections import Counter
+from collections import Counter, defaultdict
 from io import BytesIO
-import time
+from pathlib import Path
 
-# Configuração da página com CSS customizado
-def inject_custom_css():
-    st.markdown("""
-    <style>
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            color: #333;
-            line-height: 1.6;
-        }
-        .header {
-            background-color: #4a6fa5;
-            color: white;
-            padding: 1.5rem;
-            border-radius: 10px;
-            margin-bottom: 2rem;
-        }
-        .header h1 {
-            margin: 0;
-            font-size: 2rem;
-        }
-        .subtitle {
-            margin: 0.5rem 0 0;
-            opacity: 0.9;
-            font-size: 1rem;
-        }
-        .section {
-            background-color: #f8f9fa;
-            padding: 1.5rem;
-            border-radius: 10px;
-            margin-bottom: 1.5rem;
-        }
-        .section h2 {
-            margin-top: 0;
-            color: #4a6fa5;
-        }
-        .instructions {
-            color: #666;
-            font-size: 0.9rem;
-            margin-bottom: 1rem;
-        }
-        .sidebar-header {
-            font-weight: bold;
-            font-size: 1.1rem;
-            margin-bottom: 1rem;
-            color: #4a6fa5;
-        }
-        .sidebar-section {
-            font-weight: bold;
-            margin: 1.5rem 0 0.5rem;
-            color: #555;
-        }
-        .stopwords-list {
-            font-size: 0.85rem;
-            color: #666;
-            margin: 0.5rem 0;
-            line-height: 1.5;
-        }
-        .results-header {
-            font-weight: bold;
-            font-size: 1.1rem;
-            margin: 1.5rem 0 1rem;
-            color: #4a6fa5;
-        }
-        .table-container {
-            background-color: white;
-            border-radius: 8px;
-            padding: 1rem;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-        }
-        .chart-container {
-            background-color: white;
-            border-radius: 8px;
-            padding: 1rem;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-        }
-        .stDownloadButton, .stButton>button {
-            background-color: #4a6fa5 !important;
-            color: white !important;
-            border: none !important;
-            padding: 0.5rem 1rem !important;
-            border-radius: 5px !important;
-            font-weight: 500 !important;
-            transition: background-color 0.3s !important;
-        }
-        .stDownloadButton:hover, .stButton>button:hover {
-            background-color: #3a5a8f !important;
-        }
-        .stAlert {
-            border-radius: 8px !important;
-        }
-        .word-tag {
-            display: inline-block;
-            background: #f0f0f0;
-            border-radius: 15px;
-            padding: 5px 10px;
-            margin: 3px;
-            font-size: 0.85rem;
-        }
-    </style>
-    """, unsafe_allow_html=True)
+# Configuração de caminhos
+def get_data_path():
+    """Retorna o caminho para a pasta de dados"""
+    data_path = Path(__file__).parent / "data"
+    data_path.mkdir(exist_ok=True)
+    return data_path
+
+# Verifica se está rodando no Render
+def is_render():
+    return "RENDER" in os.environ
+
+# Configuração da página
+st.set_page_config(
+    page_title="Analisador Avançado de Descrições",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
 # Palavras para ignorar (inicial)
 DEFAULT_STOPWORDS = {
-    'de', 'para', 'com', 'sem', 'em', 'por', 'que', 'os', 'as', 'um', 'una',
+    'de', 'para', 'com', 'sem', 'em', 'por', 'que', 'os', 'as', 'um', 'uma',
     'ao', 'aos', 'do', 'da', 'dos', 'das', 'no', 'na', 'nos', 'nas', 'pelo',
     'pela', 'pelos', 'pelas', 'este', 'esta', 'estes', 'estas', 'esse',
     'essa', 'esses', 'essas', 'aquele', 'aquela', 'aqueles', 'aquelas',
@@ -117,95 +35,248 @@ DEFAULT_STOPWORDS = {
     'dessa', 'destes', 'destas', 'deste', 'isso', 'isto', 'aquilo'
 }
 
-def extract_first_word(text):
-    if pd.isna(text):
+def create_config_template():
+    """Cria um template para configuração de atributos"""
+    template = pd.DataFrame(columns=[
+        "Atributo", 
+        "Variações", 
+        "Padrões de reconhecimento"
+    ])
+    
+    examples = [
+        {
+            "Atributo": "Voltagem",
+            "Variações": "110v",
+            "Padrões de reconhecimento": "110v,110 v,110volts,110 volts,110-volts,110-volt,110 volt"
+        },
+        {
+            "Atributo": "Voltagem",
+            "Variações": "220v",
+            "Padrões de reconhecimento": "220v,220 v,220volts,220 volts,220-volts,220-volt,220 volt"
+        }
+    ]
+    
+    return pd.concat([template, pd.DataFrame(examples)], ignore_index=True)
+
+def create_category_template():
+    """Cria um template para categorização de palavras"""
+    template = pd.DataFrame(columns=["Palavra", "Categoria"])
+    
+    examples = [
+        {"Palavra": "Maçã", "Categoria": "Alimentos"},
+        {"Palavra": "Arroz", "Categoria": "Alimentos"},
+        {"Palavra": "Parafuso", "Categoria": "Ferramentas"}
+    ]
+    
+    return pd.concat([template, pd.DataFrame(examples)], ignore_index=True)
+
+def create_ignore_words_template():
+    """Cria um template para palavras/frases para ignorar"""
+    template = pd.DataFrame({
+        "Palavras/Frases para ignorar": [
+            "cota",
+            "ampla concorrência",
+            "item",
+            "produto",
+            "modelo",
+            "material permanente"
+        ]
+    })
+    return template
+
+def load_config(file):
+    """Carrega configurações de um arquivo Excel"""
+    try:
+        config_df = pd.read_excel(file)
+        config_dict = defaultdict(list)
+        
+        for _, row in config_df.iterrows():
+            if pd.notna(row["Atributo"]) and pd.notna(row["Variações"]) and pd.notna(row["Padrões de reconhecimento"]):
+                patterns = [p.strip().lower() for p in str(row["Padrões de reconhecimento"]).split(",")]
+                config_dict[row["Atributo"]].append({
+                    "variation": row["Variações"],
+                    "patterns": patterns
+                })
+        
+        return dict(config_dict)
+    except Exception as e:
+        st.error(f"Erro ao carregar configuração: {str(e)}")
         return None
-    text = str(text).strip()
+
+def load_categories(file):
+    """Carrega categorias de palavras de um arquivo Excel"""
+    try:
+        categories_df = pd.read_excel(file)
+        return dict(zip(
+            categories_df["Palavra"].str.lower(), 
+            categories_df["Categoria"]
+        ))
+    except Exception as e:
+        st.error(f"Erro ao carregar categorias: {str(e)}")
+        return None
+
+def load_ignore_words(file):
+    """Carrega palavras/frases para ignorar de um arquivo Excel"""
+    try:
+        ignore_df = pd.read_excel(file)
+        if "Palavras/Frases para ignorar" in ignore_df.columns:
+            phrases = [str(phrase).strip().lower() for phrase in ignore_df["Palavras/Frases para ignorar"] if str(phrase).strip()]
+            return set(phrases)
+        return set()
+    except Exception as e:
+        st.error(f"Erro ao carregar palavras/frases para ignorar: {str(e)}")
+        return None
+
+def find_matches(text, config):
+    """Encontra correspondências no texto com base na configuração"""
+    if not text or not isinstance(text, str) or not config:
+        return {}
+    
+    text_lower = text.lower()
+    matches = defaultdict(list)
+    
+    for attribute, variations in config.items():
+        for variation_data in variations:
+            for pattern in variation_data["patterns"]:
+                if re.search(rf'\b{re.escape(pattern)}\b', text_lower, re.IGNORECASE):
+                    matches[attribute].append(variation_data["variation"])
+                    break
+    
+    return {k: "/".join(sorted(set(v))) for k, v in matches.items()}
+
+def extract_first_word(text, stopwords=None, ignore_phrases=None):
+    """Extrai a primeira palavra válida do texto, ignorando frases específicas"""
+    if pd.isna(text) or not isinstance(text, str):
+        return None
+    
+    text = text.strip()
     if not text:
         return None
-    first_word = re.sub(r'^[^a-zA-Z0-9áéíóúÁÉÍÓÚãõâêîôûàèìòùç]+', '', text).split(' ')[0]
+    
+    if ignore_phrases:
+        sorted_phrases = sorted(ignore_phrases, key=len, reverse=True)
+        for phrase in sorted_phrases:
+            if text.lower().startswith(phrase.lower()):
+                remaining_text = text[len(phrase):].strip()
+                if remaining_text:
+                    return extract_first_word(remaining_text, stopwords, ignore_phrases)
+                return None
+    
+    first_word = re.sub(r'^[^a-zA-ZÀ-ÿ0-9]+', '', text).split()[0] if text else None
+    
+    if stopwords and first_word and first_word.lower() in stopwords:
+        return None
+    if first_word and len(first_word) < 3:
+        return None
+    
     return first_word if first_word else None
 
-def analyze_first_words(df, stopwords):
-    first_words = []
-    for text in df["Descrição"]:
-        word = extract_first_word(text)
-        if word and word.lower() not in stopwords and len(word) >= 3:
-            first_words.append(word.lower())
-    return Counter(first_words).most_common()
-
 def to_excel(df):
+    """Converte DataFrame para Excel"""
     output = BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df.to_excel(writer, index=False, sheet_name='Resultados')
+        df.to_excel(writer, index=False)
     return output.getvalue()
 
 def main():
-    inject_custom_css()
+    st.title("🔍 Analisador Avançado de Descrições")
     
-    st.markdown("""
-    <div class="header">
-        <h1>🔍 Analisador de Primeiras Palavras</h1>
-        <p class="subtitle">Identifique os termos mais usados no início das descrições</p>
-    </div>
-    """, unsafe_allow_html=True)
-
-    # Sidebar
+    # Sidebar configuration
     with st.sidebar:
-        st.markdown('<div class="sidebar-header">🔧 Configurações</div>', unsafe_allow_html=True)
+        st.header("⚙️ Configurações")
         
-        # Adicionar palavras para ignorar
-        st.markdown('<div class="sidebar-section">Palavras para Ignorar</div>', unsafe_allow_html=True)
-        new_stopword = st.text_input(
-            "Adicionar nova palavra:", 
-            key=f"new_stopword_{time.time()}"
+        # Attribute configuration
+        st.subheader("Configuração de Atributos")
+        st.download_button(
+            "📥 Baixar Modelo de Atributos",
+            data=to_excel(create_config_template()),
+            file_name="modelo_atributos.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
         
-        if st.button("Adicionar", key="add_stopword"):
-            if 'custom_stopwords' not in st.session_state:
-                st.session_state.custom_stopwords = set()
-            if new_stopword:
-                st.session_state.custom_stopwords.add(new_stopword.lower())
-                st.rerun()
+        uploaded_config = st.file_uploader(
+            "Carregar configuração de atributos",
+            type=["xlsx"],
+            key="config_uploader"
+        )
         
-        # Lista de palavras ignoradas
-        st.markdown('<div class="sidebar-section">Lista de Palavras Ignoradas</div>', unsafe_allow_html=True)
-        all_stopwords = DEFAULT_STOPWORDS.copy()
-        if 'custom_stopwords' in st.session_state:
-            all_stopwords.update(st.session_state.custom_stopwords)
+        # Categories configuration
+        st.subheader("Configuração de Categorias")
+        st.download_button(
+            "📥 Baixar Modelo de Categorias",
+            data=to_excel(create_category_template()),
+            file_name="modelo_categorias.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
         
-        st.markdown(f'<div class="stopwords-list">{" • ".join(sorted(all_stopwords))}</div>', unsafe_allow_html=True)
+        uploaded_categories = st.file_uploader(
+            "Carregar configuração de categorias",
+            type=["xlsx"],
+            key="categories_uploader"
+        )
         
-        if st.button("Limpar palavras adicionadas", key="clear_stopwords"):
-            if 'custom_stopwords' in st.session_state:
-                del st.session_state.custom_stopwords
-            st.rerun()
-
-    # Seção principal
-    st.markdown("""
-    <div class="section">
-        <h2>📤 Baixar Modelo</h2>
-        <p class="instructions">Preencha o modelo com suas descrições e faça upload para análise</p>
-    </div>
-    """, unsafe_allow_html=True)
+        # Ignore words/phrases
+        st.subheader("Palavras/Frases para Ignorar")
+        st.download_button(
+            "📥 Baixar Modelo de Palavras/Frases",
+            data=to_excel(create_ignore_words_template()),
+            file_name="modelo_palavras_frases_ignorar.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        
+        uploaded_ignore_words = st.file_uploader(
+            "Carregar palavras/frases para ignorar",
+            type=["xlsx"],
+            key="ignore_words_uploader"
+        )
+        
+        # Manual configuration
+        st.subheader("Adição Manual")
+        new_stopword = st.text_input("Digite uma palavra ou frase para ignorar:")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("Adicionar") and new_stopword:
+                if 'custom_stopwords' not in st.session_state:
+                    st.session_state.custom_stopwords = set()
+                st.session_state.custom_stopwords.add(new_stopword.strip().lower())
+                st.success(f"'{new_stopword}' adicionado com sucesso!")
+        
+        with col2:
+            if st.button("Limpar adições manuais"):
+                if 'custom_stopwords' in st.session_state:
+                    del st.session_state.custom_stopwords
+                    st.success("Itens removidos!")
+        
+        if 'custom_stopwords' in st.session_state and st.session_state.custom_stopwords:
+            st.markdown("**Itens ignorados atualmente:**")
+            for word in sorted(st.session_state.custom_stopwords):
+                st.markdown(f"- `{word}`")
     
+    # Load configurations
+    config = load_config(uploaded_config) if uploaded_config else None
+    categories = load_categories(uploaded_categories) if uploaded_categories else None
+    ignore_phrases = load_ignore_words(uploaded_ignore_words) if uploaded_ignore_words else set()
+    
+    if 'custom_stopwords' in st.session_state:
+        ignore_phrases.update(st.session_state.custom_stopwords)
+    
+    # Main section
+    st.header("📤 Baixar Modelo de Dados")
     empty_df = pd.DataFrame({"ID": [], "Descrição": []})
+    
     st.download_button(
         "⬇️ Baixar Modelo Vazio",
         data=to_excel(empty_df),
         file_name="modelo_descricoes.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
-
-    # Seção de análise
-    st.markdown("""
-    <div class="section">
-        <h2>📊 Analisar Arquivo</h2>
-        <p class="instructions">Faça upload do arquivo com as descrições para análise</p>
-    </div>
-    """, unsafe_allow_html=True)
     
-    uploaded_file = st.file_uploader("Selecione o arquivo (Excel ou CSV)", type=["xlsx", "csv"])
+    st.header("📊 Analisar Arquivo")
+    uploaded_file = st.file_uploader(
+        "Carregue seu arquivo de descrições", 
+        type=["xlsx", "csv"]
+    )
     
     if uploaded_file:
         try:
@@ -215,96 +286,94 @@ def main():
                 df = pd.read_csv(uploaded_file)
             
             if 'Descrição' not in df.columns:
-                st.error("❌ O arquivo deve conter a coluna 'Descrição'")
-                st.stop()
-            
-            st.success(f"✅ Arquivo carregado com sucesso! ({len(df)} registros)")
-            
-            current_stopwords = DEFAULT_STOPWORDS.copy()
-            if 'custom_stopwords' in st.session_state:
-                current_stopwords.update(st.session_state.custom_stopwords)
-            
-            # Seção para exibir palavras ignoradas
-            st.markdown("""
-            <div class="section">
-                <h2>🚫 Palavras sendo ignoradas</h2>
-                <p class="instructions">Lista completa de palavras que estão sendo filtradas na análise</p>
-            </div>
-            """, unsafe_allow_html=True)
-            
-            tags_html = "<div style='margin-bottom:20px;'>"
-            for word in sorted(current_stopwords):
-                tags_html += f"<span class='word-tag'>{word}</span>"
-            tags_html += "</div>"
-            st.markdown(tags_html, unsafe_allow_html=True)
-            
-            with st.spinner("🔍 Analisando primeiras palavras..."):
-                first_words = analyze_first_words(df, current_stopwords)
-                df_result = pd.DataFrame(first_words, columns=["Primeira Palavra", "Frequência"])
+                st.error("Erro: O arquivo deve conter a coluna 'Descrição'")
+            else:
+                st.success(f"✅ Arquivo carregado com sucesso! ({len(df)} registros)")
                 
-                # Criar relatório completo
-                df_report = df.copy()
-                df_report['Primeira Palavra'] = df_report['Descrição'].apply(extract_first_word)
-                freq_map = dict(first_words)
-                df_report['Frequência da Primeira Palavra'] = df_report['Primeira Palavra'].map(freq_map)
-                df_report['Palavra Ignorada?'] = df_report['Primeira Palavra'].apply(
-                    lambda x: 'Sim' if x and str(x).lower() in current_stopwords else 'Não'
-                )
-            
-            if not first_words:
-                st.warning("⚠️ Nenhuma palavra válida encontrada")
-                st.stop()
-            
-            st.markdown('<div class="results-header">📈 Resultados da Análise</div>', unsafe_allow_html=True)
-            
-            col1, col2 = st.columns([2, 3])
-            
-            with col1:
-                st.markdown('<div class="table-container">', unsafe_allow_html=True)
-                st.dataframe(df_result.head(50), height=600)
-                st.markdown('</div>', unsafe_allow_html=True)
-            
-            with col2:
-                st.markdown('<div class="chart-container">', unsafe_allow_html=True)
-                st.bar_chart(df_result.set_index("Primeira Palavra").head(20), height=500)
-                st.markdown('</div>', unsafe_allow_html=True)
-            
-            # Seção de exportação
-            st.markdown("""
-            <div class="section">
-                <h2>💾 Exportar Resultados</h2>
-                <p class="instructions">Escolha o formato desejado para download</p>
-            </div>
-            """, unsafe_allow_html=True)
-            
-            col_export1, col_export2, col_export3 = st.columns(3)
-            
-            with col_export1:
-                st.download_button(
-                    "📊 Resultados da Análise",
-                    data=to_excel(df_result),
-                    file_name="resultado_analise.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
-            
-            with col_export2:
-                st.download_button(
-                    "📝 Relatório Simplificado",
-                    data=to_excel(df_report[['ID', 'Descrição', 'Primeira Palavra', 'Frequência da Primeira Palavra']]),
-                    file_name="relatorio_simplificado.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
-            
-            with col_export3:
-                st.download_button(
-                    "📚 Relatório Completo",
-                    data=to_excel(df_report),
-                    file_name="relatorio_completo.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
+                current_stopwords = DEFAULT_STOPWORDS.copy()
+                
+                with st.spinner("Processando descrições..."):
+                    df['Primeira Palavra'] = df['Descrição'].apply(
+                        lambda x: extract_first_word(x, current_stopwords, ignore_phrases)
+                    )
+                    
+                    if categories:
+                        df['Categoria'] = df['Primeira Palavra'].apply(
+                            lambda x: categories.get(str(x).lower()) if pd.notna(x) else None
+                        )
+                    
+                    if config:
+                        matches = df['Descrição'].apply(
+                            lambda x: find_matches(x, config)
+                        )
+                        for attribute in config.keys():
+                            df[attribute] = matches.apply(
+                                lambda x: x.get(attribute, None)
+                            )
+                
+                st.subheader("📋 Dados Processados")
+                st.dataframe(df)
+                
+                st.subheader("📈 Estatísticas")
+                
+                if not df['Primeira Palavra'].empty:
+                    st.markdown("### Primeiras Palavras")
+                    word_counts = Counter(df['Primeira Palavra'].dropna()).most_common()
+                    df_stats_words = pd.DataFrame(word_counts, columns=["Primeira Palavra", "Frequência"])
+                    
+                    if categories:
+                        df_stats_words['Categoria'] = df_stats_words['Primeira Palavra'].apply(
+                            lambda x: categories.get(str(x).lower()) if pd.notna(x) else None
+                        )
+                    
+                    col1, col2 = st.columns([2, 3])
+                    
+                    with col1:
+                        st.dataframe(df_stats_words)
+                    
+                    with col2:
+                        st.bar_chart(df_stats_words.set_index("Primeira Palavra").head(10))
+                
+                if categories and 'Categoria' in df.columns:
+                    st.markdown("### Distribuição por Categoria")
+                    category_counts = df['Categoria'].value_counts().reset_index()
+                    category_counts.columns = ["Categoria", "Frequência"]
+                    
+                    col1, col2 = st.columns([2, 3])
+                    
+                    with col1:
+                        st.dataframe(category_counts)
+                    
+                    with col2:
+                        st.bar_chart(category_counts.set_index("Categoria"))
+                
+                st.markdown("### Exportar Resultados")
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.download_button(
+                        "📥 Baixar Dados Completos",
+                        data=to_excel(df),
+                        file_name="dados_completos_analisados.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+                
+                with col2:
+                    if not df['Primeira Palavra'].empty:
+                        st.download_button(
+                            "📊 Exportar Estatísticas",
+                            data=to_excel(df_stats_words),
+                            file_name="estatisticas_analise.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        )
         
         except Exception as e:
-            st.error(f"❌ Erro ao processar o arquivo: {str(e)}")
+            st.error(f"Erro ao processar o arquivo: {str(e)}")
 
 if __name__ == "__main__":
+    if is_render():
+        import socket
+        hostname = socket.gethostname()
+        st.write(f"Running on Render instance: {hostname}")
+    
     main()
